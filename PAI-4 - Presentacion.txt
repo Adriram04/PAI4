@@ -1,0 +1,159 @@
+
+
+===== PAGE 1 =====
+Seguridad: Fundamentos
+Seguridad en Sistemas Informáticos e Internet
+PAI 4. DevSecOps - ASEGURAMIENTO DE LA 
+CADENA DE SUMINISTRO EN EL DESARROLLO DE 
+APLICACIONES WEB
+Grupo de Investigación IDEA Research Group,
+Universidad de Sevilla
+
+===== PAGE 2 =====
+Seguridad en Sistemas Informáticos e Internet
+Desarrollo de Productos Software de Calidad
+ISO/IEC 25010:2023 
+Systems and software 
+engineering —
+Systems and software 
+Quality Requirements 
+and Evaluation 
+(SQuaRE) — Product 
+quality model
+
+===== PAGE 3 =====
+Seguridad en Sistemas Informáticos e Internet
+Desarrollo de Productos Software de Calidad
+Software Fail Watch
+
+
+===== PAGE 4 =====
+Seguridad en Sistemas Informáticos e Internet
+Operativo Operativo Operativo
+Desarrollo de Productos Software de Calidad
+Incremento de la superficie de Ataque
+Además, los productos software se está pasando desde un escenario
+de aplicaciones software monolíticas a aplicaciones basadas en
+microservicios:
+-
+
+===== PAGE 5 =====
+Seguridad en Sistemas Informáticos e Internet
+Desarrollo de Productos Software de Calidad
+Decremento de la Seguridad
+Containers
+Virtual Machine
+Time and Spatial
+Complexity
+Security
+
+===== PAGE 6 =====
+Seguridad en Sistemas Informáticos e Internet
+Desarrollo de Productos Software de Calidad.
+CI/CD Pipeline
+• Actualmente la empresa sigue para sus desarrollos un Pipeline de para
+integración y despliegue continuo (CI/CD) gracias a la automatización
+• Objetivo: Mitigar o eliminar el riesgo de generar código con
+vulnerabilidades de seguridad, utilizando diferentes herramientas de
+automatización.
+
+===== PAGE 7 =====
+Seguridad en Sistemas Informáticos e Internet
+• Los containers ofrecen
+ beneficios
+ claves que 
+ayudan
+a 
+facilitar
+ DevOps y lo 
+hacen
+ mucho
+ más
+ simple.
+•
+ DevOps: Buenas prácticas que automatizan los procesos
+entre los equipos de Desarrollo y Operación para build, 
+testear, y liberar productos software rápidamente y de 
+calidad.
+Y la 
+security
+ y 
+reliability
+??
+Desarrollo de Productos Software de Calidad
+DevOps
+
+===== PAGE 8 =====
+Seguridad en Sistemas Informáticos e Internet
+DevSecOps nos lleva a pensar desde el principio del DevOps en la seguridad de la
+aplicación y las infraestructuras. Se
+ deben
+ seleccionar
+ las
+ herramientas
+ que
+continuamente
+ integra
+ la
+ security
+ y
+ reliability para desarrollar y operar con productos
+software de Calidad.
+Desarrollo de Productos Software de Calidad.
+DevSecOps
+
+===== PAGE 9 =====
+Seguridad en Sistemas Informáticos e Internet
+Desarrollo de Productos Software de Calidad.
+Gestión en DevSecOps
+Las herramientas que consideran se podrían ser:
+• Static Application Security Testing (SAST)
+• Dynamic Application Security Testing (DAST)
+• Interactive Application Security Testing (IAST)
+• Software Composition Analysis (SCA)
+• Security in Infrastructure as Code (IaC)
+Estas herramientas se podrían integrar para su gestión en un único sistema, como podría
+ser DefectDojo, para facilitar toda la gestión de las vulnerabilidades y encontrar los bugs
+de seguridad en etapas más tempranas
+
+
+===== PAGE 10 =====
+Seguridad en Sistemas Informáticos e Internet
+Desarrollo de Productos Software de Calidad.
+Objetivos del PAI4
+Pipeline DevSecOps debe cumplir los siguientes objetivos:
+1. Definir una Pipeline CI/CD en un proyecto de prueba en un repositorio de código
+(SCM)
+2. Seleccionar al menos tres herramientas de Testeo de Seguridad (SCA, SAST,
+IAST, DAST, Security IaC) para incluirlas en el Pipeline para dotarlos de
+capacidades DevSecOps
+3. Integrar las herramientas de testeo en el ciclo de vida del desarrollo para hacer
+pipeline DevSecOps
+4. Desarrollar los tests correspondientes que permitan detectar vulnerabilidades en
+cada etapa del Pipeline DevSecOp.
+5. Seleccionar una herramienta de gestión de vulnerabilidades para integrar,
+priorizar y clasificar las vulnerabilidades de Seguridad que se vayan
+encontrando por las herramientas de testeo en el Pipeline DevSecOps. Como
+recomendación podría usarse DefectDojo o cualquier otra herramienta que se
+considere oportuna.
+
+
+===== PAGE 11 =====
+Seguridad en Sistemas Informáticos e Internet
+Desarrollo de Productos Software de Calidad.
+Normas de entrega PAI4
+¿Cómo y qué entrego en el PAI?
+Especificación
+Deadline: 27 de abril 
+(23:59)
+Informe 
+Código/Configuración
+Test/Logs
+Entregable
+Penalizaciones: 10%
+
+
+===== PAGE 12 =====
+Seguridad en Sistemas Informáticos e Internet
+Muchas gracias por 
+vuestra colaboración

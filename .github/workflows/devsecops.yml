@@ -1,0 +1,102 @@
+name: ci-devsecops-pai4
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  devsecops:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Unit and security tests
+        run: |
+          pytest -q --junitxml=reports/pytest-results.xml --cov=app --cov-report=xml:reports/coverage.xml
+
+      - name: SCA - pip-audit
+        run: |
+          pip-audit -r requirements.txt -f json -o reports/pip-audit.json || true
+
+      - name: SAST - Bandit
+        run: |
+          bandit -r app -f json -o reports/bandit.json || true
+
+      - name: IaC - Trivy config scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: .
+          format: json
+          output: reports/trivy-config.json
+          hide-progress: true
+          exit-code: "0"
+
+      - name: Build Docker image
+        run: docker build -t pai4-web:ci .
+
+      - name: Start app for DAST (Gunicorn)
+        run: |
+          gunicorn --bind 0.0.0.0:5000 app.main:app &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:5000/health > /dev/null; then
+              echo "App is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: DAST - OWASP ZAP baseline
+        run: |
+          docker run --rm --network=host -v "${PWD}/reports:/zap/wrk/:rw" -v "${PWD}/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://127.0.0.1:5000 -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I
+
+      - name: Import findings in DefectDojo (optional)
+        if: ${{ secrets.DEFECTDOJO_URL != '' && secrets.DEFECTDOJO_API_KEY != '' && secrets.DEFECTDOJO_ENGAGEMENT_ID != '' }}
+        env:
+          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+          DEFECTDOJO_ENGAGEMENT_ID: ${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}
+        run: |
+          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Bandit Scan" --report reports/bandit.json --response-out reports/defectdojo-import-bandit.json || true
+          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Pip Audit Scan" --report reports/pip-audit.json --response-out reports/defectdojo-import-pip-audit.json || true
+          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Trivy Scan" --report reports/trivy-config.json --response-out reports/defectdojo-import-trivy.json || true
+          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "ZAP Scan" --report reports/zap.json --response-out reports/defectdojo-import-zap.json || true
+
+      - name: Export DefectDojo summary (optional)
+        if: ${{ secrets.DEFECTDOJO_URL != '' && secrets.DEFECTDOJO_API_KEY != '' && secrets.DEFECTDOJO_ENGAGEMENT_ID != '' }}
+        env:
+          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
+          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+          DEFECTDOJO_ENGAGEMENT_ID: ${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}
+        run: |
+          python scripts/export_defectdojo_summary.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --output reports/defectdojo-summary.json || true
+
+      - name: Upload reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: devsecops-reports
+          path: reports/
+          if-no-files-found: error
+
+

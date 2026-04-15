@@ -1,0 +1,28 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual env
+.venv/
+venv/
+
+# Reports and temporary artifacts
+reports/*.json
+reports/*.xml
+reports/*.html
+reports/*.sarif
+!reports/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
