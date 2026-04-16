@@ -7,13 +7,11 @@ on:
   workflow_dispatch:
 
 jobs:
-  devsecops:
+  sast:
+    name: sast
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      security-events: write
-      actions: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,13 +33,75 @@ jobs:
         run: |
           pytest -q --junitxml=reports/pytest-results.xml --cov=app --cov-report=xml:reports/coverage.xml
 
-      - name: SCA - pip-audit
-        run: |
-          pip-audit -r requirements.txt -f json -o reports/pip-audit.json || true
-
       - name: SAST - Bandit
         run: |
           bandit -r app -f json -o reports/bandit.json || true
+
+      - name: SAST - Semgrep
+        run: |
+          docker run --rm \
+            -v "${PWD}:/src" \
+            returntocorp/semgrep:latest \
+            semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep.json /src/app || true
+
+      - name: Positive control - Semgrep detection
+        run: |
+          docker run --rm \
+            -v "${PWD}:/src" \
+            returntocorp/semgrep:latest \
+            semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep-positive-control.json /src/scripts/positive_controls
+          python - <<'PY'
+          import json
+          import sys
+
+          with open("reports/semgrep-positive-control.json", "r", encoding="utf-8") as f:
+              payload = json.load(f)
+
+          findings = payload.get("results", [])
+          count = len(findings) if isinstance(findings, list) else 0
+          print(f"Semgrep positive control findings: {count}")
+          if count < 1:
+              print("Expected at least one finding in semgrep positive control.")
+              sys.exit(1)
+          PY
+
+      - name: Upload SAST reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-reports
+          if-no-files-found: warn
+          path: |
+            reports/pytest-results.xml
+            reports/coverage.xml
+            reports/bandit.json
+            reports/semgrep.json
+            reports/semgrep-positive-control.json
+
+  sca_iac:
+    name: sca_iac
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      - name: SCA - pip-audit
+        run: |
+          pip-audit -r requirements.txt -f json -o reports/pip-audit.json || true
 
       - name: IaC - Trivy config scan
         uses: aquasecurity/trivy-action@0.28.0
@@ -53,13 +113,42 @@ jobs:
           hide-progress: true
           exit-code: "0"
 
-      - name: Build Docker image
-        run: docker build -t pai4-web:ci .
+      - name: Upload SCA/IaC reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: sca-iac-reports
+          if-no-files-found: warn
+          path: |
+            reports/pip-audit.json
+            reports/trivy-config.json
+
+  dast:
+    name: dast
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
       - name: Start app for DAST (Gunicorn)
         run: |
           gunicorn --bind 0.0.0.0:5000 app.main:app &
           for i in {1..30}; do
+            echo "Waiting for app ($i/30)"
             if curl -fsS http://127.0.0.1:5000/health > /dev/null; then
               echo "App is ready"
               break
@@ -69,34 +158,194 @@ jobs:
 
       - name: DAST - OWASP ZAP baseline
         run: |
-          docker run --rm --network=host -v "${PWD}/reports:/zap/wrk/:rw" -v "${PWD}/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://127.0.0.1:5000 -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I
+          docker run --rm --network=host -v "${PWD}/reports:/zap/wrk/:rw" -v "${PWD}/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://127.0.0.1:5000 -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I 2>&1 | tee reports/zap-baseline.log
 
-      - name: Import findings in DefectDojo (optional)
-        if: ${{ secrets.DEFECTDOJO_URL != '' && secrets.DEFECTDOJO_API_KEY != '' && secrets.DEFECTDOJO_ENGAGEMENT_ID != '' }}
-        env:
-          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
-          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
-          DEFECTDOJO_ENGAGEMENT_ID: ${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}
+      - name: Upload DAST reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-reports
+          if-no-files-found: warn
+          path: |
+            reports/zap.json
+            reports/zap.html
+            reports/zap-baseline.log
+
+  positive_controls:
+    name: positive_controls
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run positive controls for all tools
+        run: |
+          python scripts/run_positive_controls.py
+
+      - name: Upload positive-controls reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: positive-controls-reports
+          if-no-files-found: warn
+          path: |
+            reports/bandit-positive-control.json
+            reports/semgrep-positive-control-alltools.json
+            reports/pip-audit-positive-control.json
+            reports/trivy-positive-control.json
+            reports/zap-positive-control.json
+            reports/zap-positive-control.html
+            reports/zap-positive-control.log
+
+  deploy_staging:
+    name: deploy_staging
+    needs: [sast, sca_iac, dast]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Build image
+        run: docker build -t pai4-web:staging .
+
+      - name: Deploy container (staging)
+        run: docker run -d --name pai4-web-staging -p 8000:8000 pai4-web:staging
+
+      - name: Smoke test deployment
+        run: |
+          for i in {1..30}; do
+            echo "Waiting for staging app ($i/30)"
+            if curl -fsS http://127.0.0.1:8000/health > reports/deploy-health.json; then
+              echo "Staging app is ready"
+              break
+            fi
+            sleep 2
+          done
+          test -s reports/deploy-health.json
+
+      - name: Collect deployment evidence
+        if: ${{ always() }}
+        run: |
+          {
+            echo "=== docker ps ==="
+            docker ps -a
+            echo
+            echo "=== container logs ==="
+            docker logs pai4-web-staging 2>&1 || true
+          } > reports/deploy-staging.log
+
+      - name: Upload deployment reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-reports
+          if-no-files-found: warn
+          path: |
+            reports/deploy-health.json
+            reports/deploy-staging.log
+
+      - name: Cleanup staging container
+        if: ${{ always() }}
+        run: docker rm -f pai4-web-staging || true
+
+  defectdojo:
+    name: defectdojo
+    needs: [sast, sca_iac, dast]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
+      DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
+      DEFECTDOJO_ENGAGEMENT_ID: ${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare reports directory
+        run: mkdir -p reports
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Download stage reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-reports"
+          path: reports
+          merge-multiple: true
+
+      - name: Import findings in DefectDojo
+        if: ${{ env.DEFECTDOJO_URL != '' && env.DEFECTDOJO_API_KEY != '' && env.DEFECTDOJO_ENGAGEMENT_ID != '' }}
         run: |
           python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Bandit Scan" --report reports/bandit.json --response-out reports/defectdojo-import-bandit.json || true
           python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Pip Audit Scan" --report reports/pip-audit.json --response-out reports/defectdojo-import-pip-audit.json || true
+          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Semgrep JSON Report" --report reports/semgrep.json --response-out reports/defectdojo-import-semgrep.json || true
           python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Trivy Scan" --report reports/trivy-config.json --response-out reports/defectdojo-import-trivy.json || true
           python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "ZAP Scan" --report reports/zap.json --response-out reports/defectdojo-import-zap.json || true
 
-      - name: Export DefectDojo summary (optional)
-        if: ${{ secrets.DEFECTDOJO_URL != '' && secrets.DEFECTDOJO_API_KEY != '' && secrets.DEFECTDOJO_ENGAGEMENT_ID != '' }}
-        env:
-          DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
-          DEFECTDOJO_API_KEY: ${{ secrets.DEFECTDOJO_API_KEY }}
-          DEFECTDOJO_ENGAGEMENT_ID: ${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}
+      - name: Export DefectDojo summary
+        if: ${{ env.DEFECTDOJO_URL != '' && env.DEFECTDOJO_API_KEY != '' && env.DEFECTDOJO_ENGAGEMENT_ID != '' }}
         run: |
           python scripts/export_defectdojo_summary.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --output reports/defectdojo-summary.json || true
 
-      - name: Upload reports
+      - name: Upload DefectDojo reports
+        if: ${{ env.DEFECTDOJO_URL != '' && env.DEFECTDOJO_API_KEY != '' && env.DEFECTDOJO_ENGAGEMENT_ID != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: defectdojo-reports
+          if-no-files-found: warn
+          path: |
+            reports/defectdojo-import-*.json
+            reports/defectdojo-summary.json
+
+  reports_bundle:
+    name: reports_bundle
+    needs: [sast, sca_iac, dast, positive_controls, deploy_staging, defectdojo]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Download all reports
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-reports"
+          path: reports
+          merge-multiple: true
+
+      - name: Upload combined reports
         uses: actions/upload-artifact@v4
         with:
           name: devsecops-reports
           path: reports/
-          if-no-files-found: error
+          if-no-files-found: warn
 
 

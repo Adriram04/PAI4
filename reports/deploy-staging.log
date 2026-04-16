@@ -1,0 +1,16 @@
+﻿=== docker ps ===
+CONTAINER ID   IMAGE                     COMMAND                  CREATED          STATUS                    PORTS                                         NAMES
+af6d54f534b0   pai4-web:local-evidence   "gunicorn --bind 0.0…"   29 seconds ago   Up 27 seconds (healthy)   0.0.0.0:8000->8000/tcp, [::]:8000->8000/tcp   pai4-local-staging-evidence
+
+=== container logs ===
+docker : [2026-04-16 16:09:32 +0000] [1] [INFO] Starting gunicorn 23.0.0
+En línea: 22 Carácter: 13
++ $lines.Add((docker logs $container 2>&1 | Out-String))
++             ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([2026-04-16 16:...gunicorn 23.0.0:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[2026-04-16 16:09:32 +0000] [1] [INFO] Listening at: http://0.0.0.0:8000 (1)
+[2026-04-16 16:09:32 +0000] [1] [INFO] Using worker: sync
+[2026-04-16 16:09:32 +0000] [6] [INFO] Booting worker with pid: 6
+

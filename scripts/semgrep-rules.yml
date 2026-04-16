@@ -1,0 +1,10 @@
+rules:
+  - id: pai4.python.eval-detected
+    message: "Use of eval() detected. Avoid evaluating user-controlled input."
+    severity: ERROR
+    languages:
+      - python
+    pattern: eval(...)
+    metadata:
+      category: security
+      control: positive-detection

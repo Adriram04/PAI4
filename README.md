@@ -9,6 +9,7 @@ Este repositorio contiene una implementacion base para cubrir los objetivos del 
 - Herramientas de seguridad integradas:
   - `pip-audit` (SCA)
   - `Bandit` (SAST)
+  - `Semgrep` (SAST)
   - `OWASP ZAP` (DAST)
   - `Trivy` (Security in IaC)
 - Gestion de vulnerabilidades: `DefectDojo` (opcional, por secretos)
@@ -21,6 +22,8 @@ Este repositorio contiene una implementacion base para cubrir los objetivos del 
 - `k8s/`: manifiestos Kubernetes para analisis IaC
 - `scripts/import_to_defectdojo.py`: importacion de hallazgos por API
 - `scripts/export_defectdojo_summary.py`: resumen de priorizacion/clasificacion por engagement
+- `scripts/run_positive_controls.py`: prueba positiva automatizada para todas las herramientas
+- `scripts/positive_controls/`: casos vulnerables controlados (Bandit, Semgrep, pip-audit, Trivy, ZAP)
 - `zap-rules.tsv`: politica ZAP (aceptacion explicita de regla 10049)
 - `docs/`: contenido para el informe final
 - `reports/`: evidencias (logs/reportes)
@@ -50,10 +53,18 @@ pytest -q --junitxml=reports/pytest-results.xml --cov=app --cov-report=xml:repor
 ```bash
 pip-audit -r requirements.txt -f json -o reports/pip-audit.json
 bandit -r app -f json -o reports/bandit.json
+docker run --rm -v "$(pwd):/src" returntocorp/semgrep:latest semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep.json /src/app
+docker run --rm -v "$(pwd):/src" returntocorp/semgrep:latest semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep-positive-control.json /src/scripts/positive_controls
 trivy config . --format json --output reports/trivy-config.json
 ```
 
-5. DAST con ZAP (con la app en `http://127.0.0.1:5000`):
+5. Ejecutar control positivo completo (una deteccion por herramienta):
+
+```bash
+python scripts/run_positive_controls.py
+```
+
+6. DAST con ZAP (con la app en `http://127.0.0.1:5000`):
 
 ```bash
 docker run --rm --network host -v "$(pwd)/reports:/zap/wrk/:rw" -v "$(pwd)/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://127.0.0.1:5000 -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I
@@ -62,8 +73,10 @@ docker run --rm --network host -v "$(pwd)/reports:/zap/wrk/:rw" -v "$(pwd)/zap-r
 ## Pipeline en GitHub
 
 1. El workflow `devsecops.yml` se ejecuta en `push`, `pull_request` y manual.
-2. DAST en CI se ejecuta levantando la app con `gunicorn`.
-3. Los reportes se publican como artefacto `devsecops-reports`.
+2. El pipeline esta separado por jobs: `sast`, `sca_iac`, `dast`, `positive_controls`, `deploy_staging` y `defectdojo` (opcional).
+3. `positive_controls` ejecuta pruebas positivas para que cada herramienta detecte al menos una vulnerabilidad controlada.
+4. `deploy_staging` realiza un despliegue minimo en entorno de prueba (contenedor en runner) y valida `GET /health`.
+5. Se publican artefactos por etapa (`sast-reports`, `sca-iac-reports`, `dast-reports`, `positive-controls-reports`, `deploy-reports`) y un artefacto consolidado (`devsecops-reports`).
 
 ## DefectDojo (opcional)
 

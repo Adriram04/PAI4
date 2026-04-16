@@ -9,6 +9,9 @@
   - `.github/workflows/devsecops.yml`
   - `scripts/import_to_defectdojo.py`
   - `scripts/export_defectdojo_summary.py`
+  - `scripts/run_positive_controls.py`
+  - `scripts/semgrep-rules.yml`
+  - `scripts/positive_controls/`
   - `scripts/package_pai4.ps1`
   - `zap-rules.tsv`
   - `Dockerfile`, `docker-compose.yml`, `requirements*.txt`
@@ -18,10 +21,21 @@
   - `reports/coverage.xml`
   - `reports/pip-audit.json`
   - `reports/bandit.json`
+  - `reports/semgrep.json`
+  - `reports/semgrep-positive-control.json`
+  - `reports/semgrep-positive-control-alltools.json`
+  - `reports/bandit-positive-control.json`
+  - `reports/pip-audit-positive-control.json`
+  - `reports/trivy-positive-control.json`
+  - `reports/zap-positive-control.json`
+  - `reports/zap-positive-control.html`
+  - `reports/zap-positive-control.log`
   - `reports/trivy-config.json`
   - `reports/zap.json`
   - `reports/zap.html`
   - `reports/zap-baseline.log`
+  - `reports/deploy-health.json`
+  - `reports/deploy-staging.log`
   - `reports/defectdojo-import-*.json` (si se ejecuta con secretos DefectDojo)
   - `reports/defectdojo-summary.json` (si se ejecuta con secretos DefectDojo)
 

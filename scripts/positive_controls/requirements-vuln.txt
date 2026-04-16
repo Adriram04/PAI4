@@ -1,0 +1,2 @@
+# Positive control for SCA (pip-audit): intentionally vulnerable package pin.
+Django==1.11.0

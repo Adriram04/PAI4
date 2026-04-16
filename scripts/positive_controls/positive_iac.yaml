@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: positive-iac-insecure
+spec:
+  containers:
+    - name: web
+      image: nginx:latest
+      securityContext:
+        privileged: true
