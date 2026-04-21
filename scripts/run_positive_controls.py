@@ -10,7 +10,6 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from urllib.request import urlopen
@@ -68,19 +67,64 @@ def count_zap_findings(zap_json_path: Path, zap_log_path: Path) -> int:
     if zap_json_path.exists():
         with zap_json_path.open("r", encoding="utf-8") as handle:
             payload = json.load(handle)
-        site = (payload.get("site") or [{}])[0]
-        alerts = site.get("alerts", [])
-        return len(alerts) if isinstance(alerts, list) else 0
+        findings = 0
+        site = payload.get("site") or []
+        site_items = [site] if isinstance(site, dict) else site
+        if isinstance(site_items, list):
+            for item in site_items:
+                alerts = item.get("alerts", []) if isinstance(item, dict) else []
+                if isinstance(alerts, list):
+                    findings += len(alerts)
+        if findings > 0:
+            return findings
 
     if zap_log_path.exists():
         text = zap_log_path.read_text(encoding="utf-8", errors="ignore")
-        warn_match = re.search(r"WARN-NEW:\s*(\d+)", text)
-        fail_match = re.search(r"FAIL-NEW:\s*(\d+)", text)
-        warn = int(warn_match.group(1)) if warn_match else 0
-        fail = int(fail_match.group(1)) if fail_match else 0
+        warn_values = [int(value) for value in re.findall(r"WARN-NEW:\s*(\d+)", text)]
+        fail_values = [int(value) for value in re.findall(r"FAIL-NEW:\s*(\d+)", text)]
+        warn = max(warn_values) if warn_values else 0
+        fail = max(fail_values) if fail_values else 0
         return warn + fail
 
     return 0
+
+
+def run_zap_positive_scan(
+    *,
+    target: str,
+    extra_docker_args: list[str],
+    log_path: Path,
+    attempt_name: str,
+) -> int:
+    for output_name in ("zap-positive-control.json", "zap-positive-control.html"):
+        output_path = REPORTS / output_name
+        if output_path.exists():
+            output_path.unlink()
+
+    zap_cmd = [
+        "docker",
+        "run",
+        "--rm",
+        *extra_docker_args,
+        "-v",
+        f"{REPORTS}:/zap/wrk/:rw",
+        "ghcr.io/zaproxy/zaproxy:stable",
+        "zap-baseline.py",
+        "-t",
+        target,
+        "-J",
+        "zap-positive-control.json",
+        "-r",
+        "zap-positive-control.html",
+        "-I",
+    ]
+
+    print(f"\n>>> {' '.join(zap_cmd)}")
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(f"\n=== {attempt_name} ===\n")
+        completed = subprocess.run(zap_cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+        log.write(f"\n[exit-code] {completed.returncode}\n")
+    return completed.returncode
 
 
 def load_json(path: Path) -> dict:
@@ -167,6 +211,7 @@ def main() -> int:
         allowed_exit_codes={0, 1},
     )
 
+    zap_findings = 0
     zap_process = subprocess.Popen(
         [sys.executable, str(POSITIVE / "positive_zap_app.py")],
         cwd=ROOT,
@@ -176,32 +221,48 @@ def main() -> int:
     try:
         wait_for_http("http://127.0.0.1:5050/health", timeout_seconds=60)
 
-        zap_target = "http://127.0.0.1:5050"
-        zap_cmd = [
-            "docker",
-            "run",
-            "--rm",
-            "-v",
-            f"{REPORTS}:/zap/wrk/:rw",
-            "ghcr.io/zaproxy/zaproxy:stable",
-            "zap-baseline.py",
-            "-t",
-            zap_target,
-            "-J",
-            "zap-positive-control.json",
-            "-r",
-            "zap-positive-control.html",
-            "-I",
-        ]
-        if os.name == "nt":
-            zap_cmd[zap_cmd.index("-t") + 1] = "http://host.docker.internal:5050"
-        else:
-            zap_cmd.insert(3, "host")
-            zap_cmd.insert(3, "--network")
+        zap_log_path = REPORTS / "zap-positive-control.log"
+        zap_log_path.write_text("", encoding="utf-8")
 
-        with (REPORTS / "zap-positive-control.log").open("w", encoding="utf-8") as log:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                subprocess.run(zap_cmd, cwd=temp_dir, stdout=log, stderr=subprocess.STDOUT)
+        if os.name == "nt":
+            zap_attempts = [
+                (
+                    "windows-host-docker-internal",
+                    "http://host.docker.internal:5050",
+                    [],
+                )
+            ]
+        else:
+            zap_attempts = [
+                (
+                    "linux-host-network",
+                    "http://127.0.0.1:5050",
+                    ["--network", "host"],
+                ),
+                (
+                    "linux-host-gateway",
+                    "http://host.docker.internal:5050",
+                    ["--add-host", "host.docker.internal:host-gateway"],
+                ),
+            ]
+
+        for attempt_name, target, extra_docker_args in zap_attempts:
+            exit_code = run_zap_positive_scan(
+                target=target,
+                extra_docker_args=extra_docker_args,
+                log_path=zap_log_path,
+                attempt_name=attempt_name,
+            )
+            zap_findings = count_zap_findings(
+                REPORTS / "zap-positive-control.json",
+                zap_log_path,
+            )
+            print(
+                f"ZAP attempt '{attempt_name}' finished with exit code {exit_code} "
+                f"and findings={zap_findings}"
+            )
+            if zap_findings >= 1:
+                break
     finally:
         zap_process.terminate()
         try:
@@ -224,10 +285,7 @@ def main() -> int:
         "bandit": len(bandit_data.get("results", [])),
         "pip-audit": count_pip_audit_findings(pip_audit_data),
         "trivy": count_trivy_findings(trivy_data),
-        "zap": count_zap_findings(
-            REPORTS / "zap-positive-control.json",
-            REPORTS / "zap-positive-control.log",
-        ),
+        "zap": zap_findings,
     }
 
     print("\nPositive control findings summary:")

@@ -30,8 +30,10 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Unit and security tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
-          pytest -q --junitxml=reports/pytest-results.xml --cov=app --cov-report=xml:reports/coverage.xml
+          python -m pytest -q --junitxml=reports/pytest-results.xml --cov=app --cov-report=xml:reports/coverage.xml
 
       - name: SAST - Bandit
         run: |
@@ -104,14 +106,11 @@ jobs:
           pip-audit -r requirements.txt -f json -o reports/pip-audit.json || true
 
       - name: IaC - Trivy config scan
-        uses: aquasecurity/trivy-action@0.28.0
-        with:
-          scan-type: config
-          scan-ref: .
-          format: json
-          output: reports/trivy-config.json
-          hide-progress: true
-          exit-code: "0"
+        run: |
+          docker run --rm \
+            -v "${PWD}:/src" \
+            aquasec/trivy:0.69.3 \
+            config /src --format json --output /src/reports/trivy-config.json || true
 
       - name: Upload SCA/IaC reports
         uses: actions/upload-artifact@v4
