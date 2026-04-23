@@ -1,13 +1,13 @@
-﻿apiVersion: v1
+apiVersion: v1
 kind: Service
 metadata:
-  name: pai4-web
+  name: my-pass-web
   namespace: pai4
 spec:
   selector:
-    app: pai4-web
+    app: my-pass-web
   ports:
     - protocol: TCP
       port: 80
-      targetPort: 8000
+      targetPort: 80
   type: ClusterIP

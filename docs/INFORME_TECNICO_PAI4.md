@@ -1,97 +1,100 @@
 # Informe Tecnico PAI4
 
-## 1. Resumen ejecutivo
+## 1. Resumen
 
-Se implementa un pipeline DevSecOps para una aplicacion web de prueba, incorporando controles de seguridad automatizados en CI para reducir riesgo de despliegue.
+Se implementa un pipeline DevSecOps en GitHub Actions para analizar `my-pass` en todas las etapas de seguridad solicitadas por el PAI4.
+
+## 1.1 Restriccion sobre `my-pass`
+
+- El repositorio `my-pass` no se modifica directamente.
+- El pipeline analiza una copia de trabajo en `target/my-pass`.
+- En ejecucion local se usa `TARGET_REPOSITORY_URL=../my-pass` para evitar cambios en el origen.
 
 ## 2. Pipeline CI/CD seleccionado
 
 - Plataforma: GitHub Actions.
-- Fichero de pipeline: `.github/workflows/devsecops.yml`.
-- Flujo:
-  1. Job `sast`: tests funcionales + `Bandit` + `Semgrep` + control positivo de deteccion.
-  2. Job `sca_iac`: `pip-audit` + `trivy config`.
-  3. Job `dast`: `OWASP ZAP baseline` sobre app viva (`gunicorn`).
-  4. Job `positive_controls`: validacion positiva automatizada para todas las herramientas.
-  5. Job `deploy_staging`: despliegue minimo en entorno de prueba y smoke test de salud.
-  6. Job `defectdojo` (opcional): importacion por API + resumen de priorizacion.
-  7. Job `reports_bundle`: consolidacion final de artefactos.
+- Workflow: `.github/workflows/devsecops.yml`.
+- Objetivo de analisis: `my-pass` (clonado en `target/my-pass` en CI).
+- Variables principales del pipeline:
+  - `TARGET_CODE_PATH`
+  - `TARGET_REPOSITORY_URL`
+  - `TARGET_DAST_URL`
+  - `TARGET_WEB_PORT`
 
-## 3. Herramientas de seguridad seleccionadas
+## 3. Flujo DevSecOps implementado
 
-- SCA: `pip-audit`.
-  - Evidencia: `reports/pip-audit.json`.
+1. `sast`
+- Semgrep sobre el codigo de `my-pass`.
+- Control positivo de Semgrep.
+- Evidencias: `reports/semgrep.json`, `reports/semgrep-positive-control.json`.
 
-- SAST: `Bandit`.
-  - Evidencia: `reports/bandit.json`.
+2. `sca_iac`
+- SCA con `npm audit`.
+- Security in IaC con `trivy config`.
+- Evidencias: `reports/npm-audit.json`, `reports/trivy-config.json`.
 
+3. `dast`
+- Build web de `my-pass` con Expo.
+- Servido local temporal en CI.
+- Escaneo `OWASP ZAP baseline`.
+- Evidencias: `reports/zap.json`, `reports/zap.html`, `reports/zap-baseline.log`, `reports/dast-readiness.html`.
+
+4. `positive_controls`
+- Ejecucion automatizada de controles positivos para confirmar deteccion real en:
+  - Semgrep
+  - npm audit
+  - Trivy
+  - ZAP
+- Evidencias:
+  - `reports/semgrep-positive-control-alltools.json`
+  - `reports/npm-audit-positive-control.json`
+  - `reports/trivy-positive-control.json`
+  - `reports/zap-positive-control.json`
+
+5. `deploy_staging`
+- Publicacion del build web de `my-pass` en contenedor `nginx`.
+- Verificacion de disponibilidad HTTP.
+- Evidencias: `reports/deploy-health.html`, `reports/deploy-staging.log`.
+
+6. `defectdojo` (opcional)
+- Importacion automatizada de resultados y resumen de priorizacion.
+- Evidencias:
+  - `reports/defectdojo-import-*.json`
+  - `reports/defectdojo-summary.json`
+
+7. `reports_bundle`
+- Consolidacion de todos los reportes en `devsecops-reports`.
+
+## 4. Herramientas de seguridad seleccionadas
+
+- SCA: `npm audit`.
 - SAST: `Semgrep`.
-  - Evidencia: `reports/semgrep.json`.
-  - Configuracion local de reglas: `scripts/semgrep-rules.yml`.
+- DAST: `OWASP ZAP baseline`.
+- Security in IaC: `Trivy config`.
+- Gestion de vulnerabilidades: `DefectDojo` (opcional).
 
-- Security in IaC: `Trivy (config)`.
-  - Evidencia: `reports/trivy-config.json`.
+## 5. Integracion con DefectDojo
 
-- DAST: `OWASP ZAP (baseline)`.
-  - Evidencia: `reports/zap.json` y `reports/zap.html`.
-  - Politica ZAP: `zap-rules.tsv` (aceptacion explicita de regla 10049 por diseno de cache `no-store`).
+Automatizada mediante API REST:
 
-## 4. Integracion de herramientas en el ciclo de vida
-
-- Shift-left:
-  - SCA y SAST en cada cambio.
-  - IaC antes de despliegue.
-  - DAST en instancia activa.
-- Validacion positiva de deteccion (todas las herramientas):
-  - Script: `scripts/run_positive_controls.py`.
-  - Casos vulnerables controlados: `scripts/positive_controls/`.
-  - Evidencias: `reports/bandit-positive-control.json`, `reports/semgrep-positive-control-alltools.json`, `reports/pip-audit-positive-control.json`, `reports/trivy-positive-control.json`, `reports/zap-positive-control.json`.
-- Despliegue continuo minimo:
-  - Job `deploy_staging` con despliegue del contenedor y verificacion de `GET /health`.
-  - Evidencias: `reports/deploy-health.json`, `reports/deploy-staging.log`.
-- Endurecimiento de cabeceras HTTP en la app (`app/main.py`) y tests de validacion (`tests/test_security.py`).
-- Evidencias por etapa: `sast-reports`, `sca-iac-reports`, `dast-reports`, `positive-controls-reports`, `deploy-reports`.
-- Evidencia consolidada: artefacto `devsecops-reports`.
-
-## 5. Gestion de vulnerabilidades (Objetivo 5)
-
-Integracion DefectDojo mediante API REST con evidencia trazable:
-
-- Importacion de resultados: `scripts/import_to_defectdojo.py`.
-  - Cada import puede generar evidencia JSON: `reports/defectdojo-import-*.json`.
-- Priorizacion y clasificacion posterior por engagement: `scripts/export_defectdojo_summary.py`.
-  - Evidencia: `reports/defectdojo-summary.json` con:
-    - `severity_breakdown`
-    - `status_breakdown`
-    - `top_cwe`
-    - `priority_queue`
-- Activacion automatica en workflow con secretos:
+- Importacion: `scripts/import_to_defectdojo.py`.
+- Resumen por engagement: `scripts/export_defectdojo_summary.py`.
+- Secretos requeridos:
   - `DEFECTDOJO_URL`
   - `DEFECTDOJO_API_KEY`
   - `DEFECTDOJO_ENGAGEMENT_ID`
 
 ## 6. Conclusiones
 
-El pipeline pasa de CI/CD basico a DevSecOps con controles de seguridad automatizados, reporte continuo y mecanismo objetivo de gestion/priorizacion en DefectDojo.
+El repositorio queda alineado para que el analisis principal del PAI4 se ejecute sobre `my-pass`, con evidencias por etapa, controles positivos automatizados y opcion de gestion centralizada de vulnerabilidades.
 
-## 7. Resultado de ejecucion local (16-04-2026)
+## 7. Estado actual de evidencias
 
-- Tests: 4/4 correctos (`reports/pytest-results.xml`).
-- Cobertura: 100% (`reports/coverage.xml`).
-- SAST Bandit: 0 hallazgos (`reports/bandit.json`).
-- SAST Semgrep: incluido en pipeline (`reports/semgrep.json`).
-- Control positivo multi-herramienta (`python scripts/run_positive_controls.py`):
-  - Bandit: >= 1 hallazgo (`reports/bandit-positive-control.json`).
-  - Semgrep: >= 1 hallazgo (`reports/semgrep-positive-control-alltools.json`).
-  - pip-audit: >= 1 vulnerabilidad (`reports/pip-audit-positive-control.json`).
-  - Trivy: >= 1 misconfiguration (`reports/trivy-positive-control.json`).
-  - ZAP: >= 1 alerta (`reports/zap-positive-control.json`).
-- SCA pip-audit: 0 vulnerabilidades (`reports/pip-audit.json`).
-- Security IaC Trivy: 0 hallazgos (`reports/trivy-config.json`).
-- DAST ZAP baseline:
-  - `WARN-NEW: 0`
-  - `FAIL-NEW: 0`
-  - 1 regla en `IGNORE` por politica (`10049`, `zap-rules.tsv`).
-  - Evidencia de ejecucion: `reports/zap-baseline.log`.
-- Deploy staging: verificacion positiva de salud (`reports/deploy-health.json`).
+Evidencias regeneradas el `2026-04-22` sobre `target/my-pass`:
 
+- Principal: `reports/semgrep.json`, `reports/npm-audit.json`, `reports/trivy-config.json`, `reports/zap.json`
+- DAST: `reports/zap.html`, `reports/zap-baseline.log`
+- Positivos: `reports/semgrep-positive-control.json`, `reports/semgrep-positive-control-alltools.json`, `reports/npm-audit-positive-control.json`, `reports/trivy-positive-control.json`, `reports/zap-positive-control.json`
+- Despliegue: `reports/deploy-health.html`, `reports/deploy-staging.log`
+
+Nota: `my-pass` no incorpora manifiestos IaC clasicos (Dockerfile/Kubernetes/Terraform), por lo que `Trivy config` puede finalizar sin hallazgos en IaC objetivo.

@@ -1,108 +1,128 @@
-# PAI4 - Plantilla DevSecOps
+# PAI4 - Pipeline DevSecOps sobre my-pass
 
-Este repositorio contiene una implementacion base para cubrir los objetivos del PAI4 (DevSecOps).
+Este repositorio implementa un pipeline DevSecOps para analizar `my-pass` como sistema objetivo.
+
+## Restriccion sobre `my-pass`
+
+- `my-pass` no se modifica directamente.
+- El analisis se realiza sobre una copia de trabajo en `target/my-pass`.
+- En local, la fuente puede ser el repo vecino `../my-pass` (solo lectura para clonacion/copia).
 
 ## Stack y alcance
 
-- App de prueba: `Flask`
-- CI/CD: `GitHub Actions`
+- Objetivo de analisis: `my-pass` (TypeScript/Expo/Firebase).
+- CI/CD: `GitHub Actions`.
 - Herramientas de seguridad integradas:
-  - `pip-audit` (SCA)
-  - `Bandit` (SAST)
+  - `npm audit` (SCA)
   - `Semgrep` (SAST)
-  - `OWASP ZAP` (DAST)
-  - `Trivy` (Security in IaC)
-- Gestion de vulnerabilidades: `DefectDojo` (opcional, por secretos)
+  - `Trivy config` (Security in IaC)
+  - `OWASP ZAP baseline` (DAST)
+- Gestion de vulnerabilidades: `DefectDojo` (opcional por secretos).
 
-## Estructura
+## Configuracion del objetivo
 
-- `app/`: aplicacion web de prueba
-- `tests/`: pruebas funcionales y de seguridad
-- `.github/workflows/devsecops.yml`: pipeline CI/CD + DevSecOps
-- `k8s/`: manifiestos Kubernetes para analisis IaC
-- `scripts/import_to_defectdojo.py`: importacion de hallazgos por API
-- `scripts/export_defectdojo_summary.py`: resumen de priorizacion/clasificacion por engagement
-- `scripts/run_positive_controls.py`: prueba positiva automatizada para todas las herramientas
-- `scripts/positive_controls/`: casos vulnerables controlados (Bandit, Semgrep, pip-audit, Trivy, ZAP)
-- `zap-rules.tsv`: politica ZAP (aceptacion explicita de regla 10049)
-- `docs/`: contenido para el informe final
-- `reports/`: evidencias (logs/reportes)
+- `TARGET_CODE_PATH`: ruta del codigo objetivo (local por defecto `target/my-pass`).
+- `TARGET_REPOSITORY_URL`: repositorio a clonar si la ruta no existe.
+- `TARGET_DAST_URL`: URL a escanear con ZAP (por defecto `http://127.0.0.1:19006`).
+
+En GitHub Actions se usa:
+
+- `TARGET_CODE_PATH=target/my-pass`
+- `TARGET_REPOSITORY_URL=https://github.com/josemgarciar/my-pass.git`
+
+## Estructura relevante
+
+- `.github/workflows/devsecops.yml`: pipeline DevSecOps completo.
+- `scripts/semgrep-rules.yml`: reglas SAST para JavaScript/TypeScript.
+- `scripts/run_positive_controls.py`: validacion positiva automatizada (Semgrep, npm audit, Trivy, ZAP).
+- `scripts/positive_controls/`: casos vulnerables controlados para pruebas positivas.
+- `scripts/import_to_defectdojo.py`: importacion de hallazgos por API.
+- `scripts/export_defectdojo_summary.py`: resumen por engagement.
+- `reports/`: evidencias y reportes.
+- `docs/`: informe tecnico, manual y trazabilidad de entrega.
 
 ## Ejecucion local
 
-1. Instalar dependencias:
+1. Instalar dependencias de PAI4:
 
 ```bash
 python -m pip install -r requirements-dev.txt
 ```
 
-2. Lanzar app:
+2. Preparar objetivo de analisis sin tocar `my-pass` original:
 
 ```bash
-python -m flask --app app.main run --host 0.0.0.0 --port 5000
+make install TARGET_CODE_PATH=target/my-pass TARGET_REPOSITORY_URL=../my-pass
 ```
 
-3. Ejecutar tests:
+3. Levantar `my-pass` en web (para DAST):
 
 ```bash
-pytest -q --junitxml=reports/pytest-results.xml --cov=app --cov-report=xml:reports/coverage.xml
+make run TARGET_CODE_PATH=target/my-pass
 ```
 
-4. Ejecutar escaneos de seguridad:
+4. Ejecutar tests unitarios del objetivo:
 
 ```bash
-pip-audit -r requirements.txt -f json -o reports/pip-audit.json
-bandit -r app -f json -o reports/bandit.json
-docker run --rm -v "$(pwd):/src" returntocorp/semgrep:latest semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep.json /src/app
-docker run --rm -v "$(pwd):/src" returntocorp/semgrep:latest semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep-positive-control.json /src/scripts/positive_controls
-trivy config . --format json --output reports/trivy-config.json
+make test TARGET_CODE_PATH=target/my-pass
 ```
 
-5. Ejecutar control positivo completo (una deteccion por herramienta):
+5. Ejecutar escaneos de seguridad:
 
 ```bash
-python scripts/run_positive_controls.py
+make scan-sca TARGET_CODE_PATH=target/my-pass
+make scan-sast TARGET_CODE_PATH=target/my-pass
+make scan-iac TARGET_CODE_PATH=target/my-pass
+make scan-dast TARGET_DAST_URL=http://127.0.0.1:19006
 ```
 
-6. DAST con ZAP (con la app en `http://127.0.0.1:5000`):
+6. Ejecutar controles positivos:
 
 ```bash
-docker run --rm --network host -v "$(pwd)/reports:/zap/wrk/:rw" -v "$(pwd)/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://127.0.0.1:5000 -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I
+make scan-positive-controls
 ```
 
 ## Pipeline en GitHub
 
-1. El workflow `devsecops.yml` se ejecuta en `push`, `pull_request` y manual.
-2. El pipeline esta separado por jobs: `sast`, `sca_iac`, `dast`, `positive_controls`, `deploy_staging` y `defectdojo` (opcional).
-3. `positive_controls` ejecuta pruebas positivas para que cada herramienta detecte al menos una vulnerabilidad controlada.
-4. `deploy_staging` realiza un despliegue minimo en entorno de prueba (contenedor en runner) y valida `GET /health`.
-5. Se publican artefactos por etapa (`sast-reports`, `sca-iac-reports`, `dast-reports`, `positive-controls-reports`, `deploy-reports`) y un artefacto consolidado (`devsecops-reports`).
+El workflow `devsecops.yml` ejecuta:
+
+1. `sast`: Semgrep sobre `my-pass` + control positivo de Semgrep.
+2. `sca_iac`: npm audit + Trivy config sobre `my-pass`.
+3. `dast`: build web de `my-pass` + ZAP baseline.
+4. `positive_controls`: prueba positiva automatizada para Semgrep, npm audit, Trivy y ZAP.
+5. `deploy_staging`: despliegue del build web en `nginx` y smoke test HTTP.
+6. `defectdojo` (opcional): importacion y resumen de hallazgos.
+7. `reports_bundle`: artefacto consolidado final.
 
 ## DefectDojo (opcional)
 
-Define estos secretos en GitHub:
+Definir secretos en GitHub:
 
 - `DEFECTDOJO_URL`
 - `DEFECTDOJO_API_KEY`
 - `DEFECTDOJO_ENGAGEMENT_ID`
 
-Si existen, el workflow:
+Con esos secretos, se importan reportes y se genera `reports/defectdojo-summary.json`.
 
-- importa hallazgos por tipo de escaneo (`reports/defectdojo-import-*.json`)
-- genera resumen de priorizacion/clasificacion (`reports/defectdojo-summary.json`)
+## Evidencias verificadas
 
-## Entregable PAI4
+Evidencias principales regeneradas el `2026-04-22` sobre `target/my-pass`:
 
-En `docs/` tienes base para:
-
-- Informe tecnico
-- Manual de despliegue/uso
-- Grado de completitud y trazabilidad
-- Checklist de entrega
+- `reports/semgrep.json`
+- `reports/npm-audit.json`
+- `reports/trivy-config.json`
+- `reports/zap.json`
+- `reports/zap.html`
+- `reports/zap-baseline.log`
+- `reports/deploy-health.html`
+- `reports/deploy-staging.log`
+- `reports/semgrep-positive-control.json`
+- `reports/semgrep-positive-control-alltools.json`
+- `reports/npm-audit-positive-control.json`
+- `reports/trivy-positive-control.json`
+- `reports/zap-positive-control.json`
 
 ## Empaquetado de entrega
-
-Genera el ZIP con formato oficial:
 
 ```powershell
 ./scripts/package_pai4.ps1 -TeamNumber 1

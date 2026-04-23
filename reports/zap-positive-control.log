@@ -71,10 +71,9 @@ WARN-NEW: Server Leaks Version Information via "Server" HTTP Response Header Fie
 	http://host.docker.internal:5050/echo?msg=test (200 OK)
 	http://host.docker.internal:5050/robots.txt (404 Not Found)
 	http://host.docker.internal:5050/sitemap.xml (404 Not Found)
-WARN-NEW: Content Security Policy (CSP) Header Not Set [10038] x 4 
+WARN-NEW: Content Security Policy (CSP) Header Not Set [10038] x 3 
 	http://host.docker.internal:5050 (200 OK)
 	http://host.docker.internal:5050/echo?msg=test (200 OK)
-	http://host.docker.internal:5050/robots.txt (404 Not Found)
 	http://host.docker.internal:5050/sitemap.xml (404 Not Found)
 WARN-NEW: Storable and Cacheable Content [10049] x 4 
 	http://host.docker.internal:5050 (200 OK)
@@ -93,3 +92,7 @@ WARN-NEW: Cross-Origin-Embedder-Policy Header Missing or Invalid [90004] x 6
 	http://host.docker.internal:5050/echo?msg=test (200 OK)
 	http://host.docker.internal:5050 (200 OK)
 FAIL-NEW: 0	FAIL-INPROG: 0	WARN-NEW: 7	WARN-INPROG: 0	INFO: 0	IGNORE: 0	PASS: 60
+
+=== windows-host-docker-internal ===
+
+[exit-code] 0

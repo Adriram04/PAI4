@@ -2,133 +2,101 @@
 
 ## 1. Prerrequisitos
 
-- Python 3.12+ (recomendado 3.13)
-- Docker (DAST con ZAP y alternativa de SCA/IaC)
+- Python 3.12+
+- Node.js 20+
+- Docker
+- Acceso a internet para clonado de `my-pass` y feeds de seguridad
 
-## 2. Instalacion
+## 2. Restriccion operativa sobre `my-pass`
+
+- No se modifica el repositorio `my-pass` original.
+- Se trabaja sobre una copia en `target/my-pass`.
+- Para entorno local, se recomienda usar `TARGET_REPOSITORY_URL=../my-pass`.
+## 3. Instalacion
+
+Instalar dependencias del repositorio PAI4:
 
 ```bash
 python -m pip install -r requirements-dev.txt
 ```
 
-## 3. Ejecucion de la aplicacion
+Preparar el objetivo de analisis:
 
 ```bash
-python -m flask --app app.main run --host 0.0.0.0 --port 5000
+make install TARGET_CODE_PATH=target/my-pass TARGET_REPOSITORY_URL=../my-pass
 ```
 
-Endpoint de verificacion:
+Si `target/my-pass` no existe, `make install` lo clona desde `TARGET_REPOSITORY_URL`.
 
-- `GET /health` -> `{"status":"healthy"}`
-
-## 4. Ejecucion de pruebas
+## 4. Ejecucion del objetivo para DAST
 
 ```bash
-pytest -q --junitxml=reports/pytest-results.xml --cov=app --cov-report=xml:reports/coverage.xml
+make run TARGET_CODE_PATH=target/my-pass
 ```
 
-## 5. Ejecucion de analisis de seguridad
+Por defecto queda accesible en `http://127.0.0.1:19006`.
 
-SCA:
+## 5. Ejecucion de pruebas unitarias del objetivo
 
 ```bash
-pip-audit -r requirements.txt -f json -o reports/pip-audit.json
+make test TARGET_CODE_PATH=target/my-pass
 ```
 
-SAST:
+## 6. Ejecucion de analisis de seguridad
+
+SCA (npm audit):
 
 ```bash
-bandit -r app -f json -o reports/bandit.json
+make scan-sca TARGET_CODE_PATH=target/my-pass
 ```
 
-SAST adicional con Semgrep:
+SAST (Semgrep):
 
 ```bash
-docker run --rm -v "$(pwd):/src" returntocorp/semgrep:latest semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep.json /src/app
+make scan-sast TARGET_CODE_PATH=target/my-pass
 ```
 
-Control positivo de deteccion (Semgrep):
+Security in IaC (Trivy):
 
 ```bash
-docker run --rm -v "$(pwd):/src" returntocorp/semgrep:latest semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep-positive-control.json /src/scripts/positive_controls
+make scan-iac TARGET_CODE_PATH=target/my-pass
 ```
 
-Control positivo completo (todas las herramientas):
+DAST (ZAP baseline):
 
 ```bash
-python scripts/run_positive_controls.py
+make scan-dast TARGET_DAST_URL=http://127.0.0.1:19006
 ```
 
-Este control genera evidencias:
+## 7. Controles positivos automatizados
 
-- `reports/bandit-positive-control.json`
+```bash
+make scan-positive-controls
+```
+
+Genera como minimo:
+
 - `reports/semgrep-positive-control-alltools.json`
-- `reports/pip-audit-positive-control.json`
+- `reports/npm-audit-positive-control.json`
 - `reports/trivy-positive-control.json`
 - `reports/zap-positive-control.json`
 - `reports/zap-positive-control.log`
 
-IaC:
+## 8. Pipeline en GitHub Actions
 
-```bash
-trivy config . --format json --output reports/trivy-config.json
-```
+Workflow: `.github/workflows/devsecops.yml`.
 
-Alternativa SCA con Docker (util en Windows con rutas Unicode):
+Jobs:
 
-```bash
-docker run --rm -v "$(pwd):/src" -w /src python:3.13-slim sh -lc "pip install --no-cache-dir pip-audit && pip-audit -r requirements.txt -f json -o reports/pip-audit.json"
-```
+- `sast`: Semgrep + control positivo de Semgrep.
+- `sca_iac`: npm audit + Trivy config.
+- `dast`: build web de `my-pass` + ZAP baseline.
+- `positive_controls`: validacion positiva de Semgrep, npm audit, Trivy y ZAP.
+- `deploy_staging`: despliegue web en `nginx` + smoke test.
+- `defectdojo` (opcional): importacion y resumen.
+- `reports_bundle`: consolidacion final de artefactos.
 
-Alternativa IaC con Docker:
-
-```bash
-docker run --rm -v "$(pwd):/src" aquasec/trivy:0.69.3 config /src --format json --output /src/reports/trivy-config.json
-```
-
-DAST (con app levantada en puerto 5000 y politica ZAP):
-
-```bash
-docker run --rm --network host -v "$(pwd)/reports:/zap/wrk/:rw" -v "$(pwd)/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://127.0.0.1:5000 -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I
-```
-
-En Windows con Docker Desktop, usar `host.docker.internal`:
-
-```bash
-docker run --rm -v "$(pwd)/reports:/zap/wrk/:rw" -v "$(pwd)/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://host.docker.internal:5000 -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I
-```
-
-## 6. Pipeline en GitHub Actions
-
-- Workflow: `.github/workflows/devsecops.yml`.
-- Disparadores: `push`, `pull_request`, `workflow_dispatch`.
-- Jobs por etapa:
-  - `sast`: tests + Bandit + Semgrep + control positivo de deteccion.
-  - `sca_iac`: pip-audit + Trivy config.
-  - `dast`: ZAP baseline sobre app viva en `gunicorn`.
-  - `positive_controls`: prueba positiva automatizada para Bandit, Semgrep, pip-audit, Trivy y ZAP.
-  - `deploy_staging`: despliegue minimo en entorno de prueba y smoke test de `GET /health`.
-  - `defectdojo` (opcional): importacion y resumen.
-  - `reports_bundle`: artefacto combinado final.
-- Artefactos por etapa: `sast-reports`, `sca-iac-reports`, `dast-reports`, `positive-controls-reports`, `deploy-reports`, `defectdojo-reports` (si aplica).
-- Artefacto consolidado: `devsecops-reports`.
-
-## 7. Integracion con DefectDojo
-
-### 7.1. Despliegue local de DefectDojo
-
-Para levantar DefectDojo en local y poder recibir reportes:
-
-```bash
-git clone https://github.com/DefectDojo/django-DefectDojo
-cd django-DefectDojo
-./dc-build-local.sh
-./dc-up-local.sh
-```
-
-Despues, acceder a `http://localhost:8080`, iniciar sesion con las credenciales de administrador, crear un `Product` y un `Engagement`, y generar la `API Key` desde el perfil de usuario.
-
-### 7.2. Configuracion en GitHub
+## 9. Integracion con DefectDojo
 
 Configurar secretos del repositorio:
 
@@ -136,19 +104,27 @@ Configurar secretos del repositorio:
 - `DEFECTDOJO_API_KEY`
 - `DEFECTDOJO_ENGAGEMENT_ID`
 
-Si existen, el workflow ejecuta:
+Con secretos presentes, se generan:
 
-1. Importacion de hallazgos (`scripts/import_to_defectdojo.py`) y generacion de:
-- `reports/defectdojo-import-bandit.json`
-- `reports/defectdojo-import-pip-audit.json`
+- `reports/defectdojo-import-npm-audit.json`
 - `reports/defectdojo-import-semgrep.json`
 - `reports/defectdojo-import-trivy.json`
 - `reports/defectdojo-import-zap.json`
-
-2. Resumen de priorizacion/clasificacion (`scripts/export_defectdojo_summary.py`):
 - `reports/defectdojo-summary.json`
 
-## 8. Empaquetado final
+## 10. Estado de evidencias (actual)
+
+Evidencias verificadas en `reports/` el `2026-04-22`:
+
+- `semgrep.json`, `npm-audit.json`, `trivy-config.json`, `zap.json`, `zap.html`, `zap-baseline.log`
+- `semgrep-positive-control.json`, `semgrep-positive-control-alltools.json`
+- `npm-audit-positive-control.json`, `trivy-positive-control.json`
+- `zap-positive-control.json`, `zap-positive-control.html`, `zap-positive-control.log`
+- `deploy-health.html`, `deploy-staging.log`
+
+Nota: en `my-pass` no hay manifiestos IaC clasicos (Dockerfile/Kubernetes/Terraform), por lo que `trivy-config.json` puede reflejar ejecucion sin hallazgos de misconfig en IaC.
+
+## 11. Empaquetado final
 
 ```powershell
 ./scripts/package_pai4.ps1 -TeamNumber <Num>

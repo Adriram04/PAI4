@@ -6,6 +6,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  TARGET_CODE_PATH: target/my-pass
+  TARGET_REPOSITORY_URL: https://github.com/josemgarciar/my-pass.git
+  TARGET_DAST_URL: http://127.0.0.1:19006
+  TARGET_WEB_PORT: "19006"
+
 jobs:
   sast:
     name: sast
@@ -16,35 +22,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.13"
+          node-version: "20"
 
       - name: Prepare reports directory
         run: mkdir -p reports
 
-      - name: Install dependencies
+      - name: Prepare my-pass target source
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
-
-      - name: Unit and security tests
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          python -m pytest -q --junitxml=reports/pytest-results.xml --cov=app --cov-report=xml:reports/coverage.xml
-
-      - name: SAST - Bandit
-        run: |
-          bandit -r app -f json -o reports/bandit.json || true
+          mkdir -p "$(dirname "$TARGET_CODE_PATH")"
+          if [ ! -d "$TARGET_CODE_PATH/.git" ] && [ ! -f "$TARGET_CODE_PATH/package.json" ]; then
+            git clone --depth 1 "$TARGET_REPOSITORY_URL" "$TARGET_CODE_PATH"
+          fi
+          test -f "$TARGET_CODE_PATH/package.json"
 
       - name: SAST - Semgrep
         run: |
           docker run --rm \
             -v "${PWD}:/src" \
             returntocorp/semgrep:latest \
-            semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep.json /src/app || true
+            semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep.json /src/$TARGET_CODE_PATH || true
 
       - name: Positive control - Semgrep detection
         run: |
@@ -52,7 +51,7 @@ jobs:
             -v "${PWD}:/src" \
             returntocorp/semgrep:latest \
             semgrep scan --no-git-ignore --config /src/scripts/semgrep-rules.yml --json -o /src/reports/semgrep-positive-control.json /src/scripts/positive_controls
-          python - <<'PY'
+          python3 - <<'PY'
           import json
           import sys
 
@@ -73,9 +72,6 @@ jobs:
           name: sast-reports
           if-no-files-found: warn
           path: |
-            reports/pytest-results.xml
-            reports/coverage.xml
-            reports/bandit.json
             reports/semgrep.json
             reports/semgrep-positive-control.json
 
@@ -88,29 +84,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          python-version: "3.13"
+          node-version: "20"
 
       - name: Prepare reports directory
         run: mkdir -p reports
 
-      - name: Install dependencies
+      - name: Prepare my-pass target source
         run: |
-          python -m pip install --upgrade pip
-          pip install pip-audit
+          mkdir -p "$(dirname "$TARGET_CODE_PATH")"
+          if [ ! -d "$TARGET_CODE_PATH/.git" ] && [ ! -f "$TARGET_CODE_PATH/package.json" ]; then
+            git clone --depth 1 "$TARGET_REPOSITORY_URL" "$TARGET_CODE_PATH"
+          fi
+          test -f "$TARGET_CODE_PATH/package.json"
 
-      - name: SCA - pip-audit
+      - name: Install target dependencies
         run: |
-          pip-audit -r requirements.txt -f json -o reports/pip-audit.json || true
+          npm ci --prefix "$TARGET_CODE_PATH"
+
+      - name: SCA - npm audit
+        run: |
+          cd "$TARGET_CODE_PATH"
+          npm audit --json > "$GITHUB_WORKSPACE/reports/npm-audit.json" || true
 
       - name: IaC - Trivy config scan
         run: |
           docker run --rm \
             -v "${PWD}:/src" \
             aquasec/trivy:0.69.3 \
-            config /src --format json --output /src/reports/trivy-config.json || true
+            config /src/$TARGET_CODE_PATH --format json --output /src/reports/trivy-config.json || true
 
       - name: Upload SCA/IaC reports
         uses: actions/upload-artifact@v4
@@ -118,7 +122,7 @@ jobs:
           name: sca-iac-reports
           if-no-files-found: warn
           path: |
-            reports/pip-audit.json
+            reports/npm-audit.json
             reports/trivy-config.json
 
   dast:
@@ -135,29 +139,53 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Prepare reports directory
         run: mkdir -p reports
 
-      - name: Install runtime dependencies
+      - name: Prepare my-pass target source
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          mkdir -p "$(dirname "$TARGET_CODE_PATH")"
+          if [ ! -d "$TARGET_CODE_PATH/.git" ] && [ ! -f "$TARGET_CODE_PATH/package.json" ]; then
+            git clone --depth 1 "$TARGET_REPOSITORY_URL" "$TARGET_CODE_PATH"
+          fi
+          test -f "$TARGET_CODE_PATH/package.json"
 
-      - name: Start app for DAST (Gunicorn)
+      - name: Install target dependencies
         run: |
-          gunicorn --bind 0.0.0.0:5000 app.main:app &
+          npm ci --prefix "$TARGET_CODE_PATH"
+
+      - name: Start my-pass web target
+        run: |
+          pushd "$TARGET_CODE_PATH"
+          npx expo export --platform web
+          python -m http.server "$TARGET_WEB_PORT" -d dist > "$GITHUB_WORKSPACE/reports/target-web.log" 2>&1 &
+          echo $! > "$GITHUB_WORKSPACE/reports/target-web.pid"
+          popd
           for i in {1..30}; do
-            echo "Waiting for app ($i/30)"
-            if curl -fsS http://127.0.0.1:5000/health > /dev/null; then
-              echo "App is ready"
+            echo "Waiting for my-pass web target ($i/30)"
+            if curl -fsS "$TARGET_DAST_URL" > reports/dast-readiness.html; then
+              echo "my-pass target is ready"
               break
             fi
             sleep 2
           done
+          test -s reports/dast-readiness.html
 
       - name: DAST - OWASP ZAP baseline
         run: |
-          docker run --rm --network=host -v "${PWD}/reports:/zap/wrk/:rw" -v "${PWD}/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t http://127.0.0.1:5000 -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I 2>&1 | tee reports/zap-baseline.log
+          docker run --rm --network=host -v "${PWD}/reports:/zap/wrk/:rw" -v "${PWD}/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t "$TARGET_DAST_URL" -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I 2>&1 | tee reports/zap-baseline.log
+
+      - name: Stop my-pass web target
+        if: ${{ always() }}
+        run: |
+          if [ -f reports/target-web.pid ]; then
+            kill "$(cat reports/target-web.pid)" || true
+          fi
 
       - name: Upload DAST reports
         uses: actions/upload-artifact@v4
@@ -168,6 +196,8 @@ jobs:
             reports/zap.json
             reports/zap.html
             reports/zap-baseline.log
+            reports/target-web.log
+            reports/dast-readiness.html
 
   positive_controls:
     name: positive_controls
@@ -182,6 +212,11 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
       - name: Prepare reports directory
         run: mkdir -p reports
@@ -201,9 +236,8 @@ jobs:
           name: positive-controls-reports
           if-no-files-found: warn
           path: |
-            reports/bandit-positive-control.json
             reports/semgrep-positive-control-alltools.json
-            reports/pip-audit-positive-control.json
+            reports/npm-audit-positive-control.json
             reports/trivy-positive-control.json
             reports/zap-positive-control.json
             reports/zap-positive-control.html
@@ -221,26 +255,43 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Prepare reports directory
         run: mkdir -p reports
 
-      - name: Build image
-        run: docker build -t pai4-web:staging .
+      - name: Prepare my-pass target source
+        run: |
+          mkdir -p "$(dirname "$TARGET_CODE_PATH")"
+          if [ ! -d "$TARGET_CODE_PATH/.git" ] && [ ! -f "$TARGET_CODE_PATH/package.json" ]; then
+            git clone --depth 1 "$TARGET_REPOSITORY_URL" "$TARGET_CODE_PATH"
+          fi
+          test -f "$TARGET_CODE_PATH/package.json"
+
+      - name: Build my-pass web bundle
+        run: |
+          npm ci --prefix "$TARGET_CODE_PATH"
+          cd "$TARGET_CODE_PATH"
+          npx expo export --platform web
 
       - name: Deploy container (staging)
-        run: docker run -d --name pai4-web-staging -p 8000:8000 pai4-web:staging
+        run: |
+          docker run -d --name pai4-web-staging -p 8000:80 -v "${PWD}/${TARGET_CODE_PATH}/dist:/usr/share/nginx/html:ro" nginx:stable-alpine
 
       - name: Smoke test deployment
         run: |
           for i in {1..30}; do
             echo "Waiting for staging app ($i/30)"
-            if curl -fsS http://127.0.0.1:8000/health > reports/deploy-health.json; then
+            if curl -fsS http://127.0.0.1:8000 > reports/deploy-health.html; then
               echo "Staging app is ready"
               break
             fi
             sleep 2
           done
-          test -s reports/deploy-health.json
+          test -s reports/deploy-health.html
 
       - name: Collect deployment evidence
         if: ${{ always() }}
@@ -260,7 +311,7 @@ jobs:
           name: deploy-reports
           if-no-files-found: warn
           path: |
-            reports/deploy-health.json
+            reports/deploy-health.html
             reports/deploy-staging.log
 
       - name: Cleanup staging container
@@ -304,8 +355,7 @@ jobs:
       - name: Import findings in DefectDojo
         if: ${{ env.DEFECTDOJO_URL != '' && env.DEFECTDOJO_API_KEY != '' && env.DEFECTDOJO_ENGAGEMENT_ID != '' }}
         run: |
-          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Bandit Scan" --report reports/bandit.json --response-out reports/defectdojo-import-bandit.json || true
-          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Pip Audit Scan" --report reports/pip-audit.json --response-out reports/defectdojo-import-pip-audit.json || true
+          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "NPM Audit Scan" --report reports/npm-audit.json --response-out reports/defectdojo-import-npm-audit.json || true
           python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Semgrep JSON Report" --report reports/semgrep.json --response-out reports/defectdojo-import-semgrep.json || true
           python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Trivy Scan" --report reports/trivy-config.json --response-out reports/defectdojo-import-trivy.json || true
           python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "ZAP Scan" --report reports/zap.json --response-out reports/defectdojo-import-zap.json || true
@@ -346,5 +396,3 @@ jobs:
           name: devsecops-reports
           path: reports/
           if-no-files-found: warn
-
-

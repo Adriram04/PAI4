@@ -1,0 +1,9 @@
+::ffff:127.0.0.1 - - [22/Apr/2026 20:41:48] "GET / HTTP/1.1" 200 -
+::ffff:127.0.0.1 - - [22/Apr/2026 20:42:18] "GET / HTTP/1.1" 200 -
+::ffff:127.0.0.1 - - [22/Apr/2026 20:42:18] code 404, message File not found
+::ffff:127.0.0.1 - - [22/Apr/2026 20:42:18] "GET / HTTP/1.1" 200 -
+::ffff:127.0.0.1 - - [22/Apr/2026 20:42:18] "GET /robots.txt HTTP/1.1" 404 -
+::ffff:127.0.0.1 - - [22/Apr/2026 20:42:18] code 404, message File not found
+::ffff:127.0.0.1 - - [22/Apr/2026 20:42:18] "GET /sitemap.xml HTTP/1.1" 404 -
+::ffff:127.0.0.1 - - [22/Apr/2026 20:42:19] "GET /favicon.ico HTTP/1.1" 200 -
+::ffff:127.0.0.1 - - [22/Apr/2026 20:42:20] "GET /_expo/static/js/web/index-66f62f72bc6d86c41f21a3a22425f5d4.js HTTP/1.1" 200 -

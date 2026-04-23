@@ -1,0 +1,9 @@
+{
+  "name": "npm-audit-positive-control",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Intentionally vulnerable dependency to validate npm audit detection.",
+  "dependencies": {
+    "minimist": "0.0.8"
+  }
+}

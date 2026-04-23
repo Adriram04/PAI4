@@ -1,10 +1,22 @@
 rules:
-  - id: pai4.python.eval-detected
-    message: "Use of eval() detected. Avoid evaluating user-controlled input."
+  - id: pai4.javascript.eval-detected
+    message: "Use of eval() detected. Avoid evaluating dynamic input."
     severity: ERROR
     languages:
-      - python
+      - javascript
+      - typescript
     pattern: eval(...)
     metadata:
       category: security
       control: positive-detection
+
+  - id: pai4.javascript.new-function-detected
+    message: "Use of Function constructor detected. It can execute dynamic code."
+    severity: WARNING
+    languages:
+      - javascript
+      - typescript
+    pattern: new Function(...)
+    metadata:
+      category: security
+      control: sast-target

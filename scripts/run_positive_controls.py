@@ -1,4 +1,4 @@
-"""Run and validate positive controls for all security tools in PAI4.
+"""Run and validate positive controls for the security tools used in PAI4.
 
 The goal is to prove each integrated tool can detect at least one known issue.
 """
@@ -8,8 +8,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib.request import urlopen
@@ -17,18 +19,31 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parents[1]
 REPORTS = ROOT / "reports"
 POSITIVE = ROOT / "scripts" / "positive_controls"
+NPM_AUDIT_CONTROL = POSITIVE / "npm_audit_control"
+NPM_CMD = "npm.cmd" if os.name == "nt" else "npm"
 
 
-def run(command: list[str], allowed_exit_codes: set[int] | None = None) -> int:
+def run(
+    command: list[str],
+    *,
+    allowed_exit_codes: set[int] | None = None,
+    cwd: Path = ROOT,
+    capture_output: bool = False,
+) -> subprocess.CompletedProcess[str]:
     allowed = allowed_exit_codes or {0}
     printable = " ".join(command)
     print(f"\n>>> {printable}")
-    completed = subprocess.run(command, cwd=ROOT)
+    completed = subprocess.run(
+        command,
+        cwd=cwd,
+        capture_output=capture_output,
+        text=True,
+    )
     if completed.returncode not in allowed:
         raise RuntimeError(
             f"Command failed with exit code {completed.returncode}: {printable}"
         )
-    return completed.returncode
+    return completed
 
 
 def wait_for_http(url: str, timeout_seconds: int = 60) -> None:
@@ -44,9 +59,30 @@ def wait_for_http(url: str, timeout_seconds: int = 60) -> None:
     raise TimeoutError(f"Timed out waiting for {url}")
 
 
-def count_pip_audit_findings(payload: dict) -> int:
-    dependencies = payload.get("dependencies", [])
-    return sum(len(item.get("vulns", [])) for item in dependencies)
+def count_npm_audit_findings(payload: dict) -> int:
+    metadata = payload.get("metadata", {})
+    if isinstance(metadata, dict):
+        vulnerabilities = metadata.get("vulnerabilities", {})
+        if isinstance(vulnerabilities, dict):
+            total = vulnerabilities.get("total")
+            if isinstance(total, int):
+                return total
+            severities = ("critical", "high", "moderate", "low", "info")
+            return sum(
+                value
+                for key, value in vulnerabilities.items()
+                if key in severities and isinstance(value, int)
+            )
+
+    vulnerabilities = payload.get("vulnerabilities", {})
+    if isinstance(vulnerabilities, dict):
+        return len(vulnerabilities)
+
+    advisories = payload.get("advisories", {})
+    if isinstance(advisories, dict):
+        return len(advisories)
+
+    return 0
 
 
 def count_trivy_findings(payload: dict) -> int:
@@ -127,6 +163,37 @@ def run_zap_positive_scan(
     return completed.returncode
 
 
+def run_npm_audit_positive_control() -> None:
+    source_package_json = NPM_AUDIT_CONTROL / "package.json"
+    if not source_package_json.exists():
+        raise FileNotFoundError(
+            "Missing npm audit positive control package.json: "
+            f"{source_package_json}"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="pai4-npm-audit-control-") as temp_dir:
+        temp_path = Path(temp_dir)
+        shutil.copy2(source_package_json, temp_path / "package.json")
+
+        run(
+            [NPM_CMD, "install", "--package-lock-only", "--ignore-scripts"],
+            cwd=temp_path,
+        )
+        completed = run(
+            [NPM_CMD, "audit", "--json", "--omit=dev"],
+            cwd=temp_path,
+            allowed_exit_codes={0, 1},
+            capture_output=True,
+        )
+
+        raw_output = completed.stdout.strip() or completed.stderr.strip()
+        if not raw_output:
+            raise RuntimeError("npm audit did not produce JSON output")
+
+        output_path = REPORTS / "npm-audit-positive-control.json"
+        output_path.write_text(raw_output, encoding="utf-8")
+
+
 def load_json(path: Path) -> dict:
     if not path.exists():
         raise FileNotFoundError(f"Missing expected report: {path}")
@@ -155,43 +222,11 @@ def main() -> int:
             "--json",
             "-o",
             "/src/reports/semgrep-positive-control-alltools.json",
-            "/src/scripts/positive_controls/positive_semgrep.py",
+            "/src/scripts/positive_controls/positive_semgrep.js",
         ]
     )
 
-    run(
-        [
-            sys.executable,
-            "-m",
-            "bandit",
-            "-r",
-            str(POSITIVE / "positive_bandit.py"),
-            "-f",
-            "json",
-            "-o",
-            str(REPORTS / "bandit-positive-control.json"),
-        ],
-        allowed_exit_codes={0, 1},
-    )
-
-    run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "-v",
-            f"{ROOT}:/src",
-            "-w",
-            "/src",
-            "python:3.13-slim",
-            "sh",
-            "-lc",
-            "pip install --quiet --no-cache-dir pip-audit && "
-            "pip-audit -r scripts/positive_controls/requirements-vuln.txt "
-            "-f json -o reports/pip-audit-positive-control.json",
-        ],
-        allowed_exit_codes={0, 1},
-    )
+    run_npm_audit_positive_control()
 
     run(
         [
@@ -276,14 +311,12 @@ def main() -> int:
             zap_yaml.write_bytes(original_zap_yaml)
 
     semgrep_data = load_json(REPORTS / "semgrep-positive-control-alltools.json")
-    bandit_data = load_json(REPORTS / "bandit-positive-control.json")
-    pip_audit_data = load_json(REPORTS / "pip-audit-positive-control.json")
+    npm_audit_data = load_json(REPORTS / "npm-audit-positive-control.json")
     trivy_data = load_json(REPORTS / "trivy-positive-control.json")
 
     checks = {
         "semgrep": len(semgrep_data.get("results", [])),
-        "bandit": len(bandit_data.get("results", [])),
-        "pip-audit": count_pip_audit_findings(pip_audit_data),
+        "npm-audit": count_npm_audit_findings(npm_audit_data),
         "trivy": count_trivy_findings(trivy_data),
         "zap": zap_findings,
     }

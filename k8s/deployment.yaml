@@ -1,32 +1,32 @@
-﻿apiVersion: apps/v1
+apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: pai4-web
+  name: my-pass-web
   namespace: pai4
   labels:
-    app: pai4-web
+    app: my-pass-web
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: pai4-web
+      app: my-pass-web
   template:
     metadata:
       labels:
-        app: pai4-web
+        app: my-pass-web
     spec:
       securityContext:
         runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
+        runAsUser: 101
+        runAsGroup: 101
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: web
-          image: pai4-web:1.0.0
+          image: my-pass-web:staging
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 8000
+            - containerPort: 80
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

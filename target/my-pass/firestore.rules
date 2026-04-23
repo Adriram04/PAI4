@@ -1,0 +1,97 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── User Namespace ──────────────────────────────────────────────
+    match /users/{userId} {
+      function isOwner() {
+        return request.auth != null && request.auth.uid == userId;
+      }
+
+      function isPasswordEntry(docId) {
+        return docId != "vault-meta"
+          && request.resource.data.keys().hasAll(['encryptedData', 'iv', 'salt', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['encryptedData', 'iv', 'salt', 'updatedAt', 'createdAt', 'serviceName', 'url', 'username', 'category', 'notes', 'title', 'attachmentRef', 'expiresAt'])
+          && request.resource.data.encryptedData is string
+          && request.resource.data.encryptedData.size() <= 10000
+          && (!request.resource.data.keys().hasAny(['attachmentRef']) || request.resource.data.attachmentRef is string)
+          && (!request.resource.data.keys().hasAny(['expiresAt']) || request.resource.data.expiresAt is timestamp);
+      }
+
+      function isVaultMetadata(docId) {
+        return docId == "vault-meta"
+          && request.resource.data.keys().hasAll(['verificationCiphertext', 'verificationIv', 'verificationSalt', 'version', 'serviceName', 'username', 'url', 'createdAt', 'updatedAt'])
+          && request.resource.data.keys().hasOnly(['verificationCiphertext', 'verificationIv', 'verificationSalt', 'version', 'serviceName', 'username', 'url', 'createdAt', 'updatedAt'])
+          && request.resource.data.verificationCiphertext is string
+          && request.resource.data.verificationIv is string
+          && request.resource.data.verificationSalt is string
+          && request.resource.data.version is int
+          && request.resource.data.serviceName == "__mypass_vault_meta__"
+          && request.resource.data.username == ""
+          && request.resource.data.url == ""
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp;
+      }
+      
+      // Passwords Collection: Schema validation and owner-only access
+      match /passwords/{docId} {
+        allow read, delete: if isOwner();
+        allow create, update: if isOwner()
+          && (isPasswordEntry(docId) || isVaultMetadata(docId));
+      }
+
+      // Metadata: Profile and vault status
+      match /metadata/{docId} {
+        allow read: if isOwner();
+        allow create, update: if isOwner()
+          && request.resource.data.passwordCount is int
+          && request.resource.data.vaultInitialized is bool;
+      }
+
+      // Settings: user preferences and encrypted TOTP configuration
+      match /settings/{docId} {
+        allow read: if isOwner() && docId == "preferences";
+        allow delete: if isOwner() && docId == "preferences";
+        allow create, update: if isOwner()
+          && docId == "preferences"
+          && request.resource.data.keys().hasOnly(['language', 'sessionTimeoutMinutes', 'defaultCategory', 'totpEnabled', 'totpSecret'])
+          && (!request.resource.data.keys().hasAny(['language']) || request.resource.data.language in ['en', 'es'])
+          && (!request.resource.data.keys().hasAny(['sessionTimeoutMinutes']) || request.resource.data.sessionTimeoutMinutes is int)
+          && (!request.resource.data.keys().hasAny(['defaultCategory']) || request.resource.data.defaultCategory in ['social', 'email', 'finance', 'work', 'entertainment', 'shopping', 'development', 'other'])
+          && (!request.resource.data.keys().hasAny(['totpEnabled']) || request.resource.data.totpEnabled is bool)
+          && (!request.resource.data.keys().hasAny(['totpSecret'])
+            || request.resource.data.totpSecret == null
+            || (
+              request.resource.data.totpSecret.keys().hasAll(['ciphertext', 'iv', 'salt'])
+              && request.resource.data.totpSecret.keys().hasOnly(['ciphertext', 'iv', 'salt'])
+              && request.resource.data.totpSecret.ciphertext is string
+              && request.resource.data.totpSecret.iv is string
+              && request.resource.data.totpSecret.salt is string
+            ));
+      }
+
+      // Audit Log: Append-only for users, no modification/deletion
+      match /auditLog/{docId} {
+        allow read: if isOwner();
+        allow create: if isOwner()
+          && request.resource.data.keys().hasAll(['action', 'timestamp', 'deviceInfo']);
+        allow update, delete: if false;
+      }
+
+      // Recovery Codes: owner-only read/write/delete
+      match /recoveryCodes/{docId} {
+        allow read, delete: if isOwner();
+        allow create, update: if isOwner()
+          && request.resource.data.keys().hasAll(['encryptedPassword', 'iv', 'salt', 'codeHash', 'used', 'createdAt'])
+          && request.resource.data.used is bool
+          && request.resource.data.createdAt is timestamp;
+      }
+    }
+
+    // ─── Default deny ────────────────────────────────────────────────
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
