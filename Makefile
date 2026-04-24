@@ -36,7 +36,7 @@ scan-iac: prepare-target
 	docker run --rm -v "$$(pwd):/src" aquasec/trivy:0.69.3 config /src/$(TARGET_CODE_PATH) --skip-dirs /src/$(TARGET_CODE_PATH)/node_modules --skip-dirs /src/$(TARGET_CODE_PATH)/.git --skip-files /src/$(TARGET_CODE_PATH)/package-lock.json --misconfig-scanners azure-arm,cloudformation,dockerfile,kubernetes,terraform,terraformplan-json,terraformplan-snapshot,ansible --timeout 20m --format json --output /src/reports/trivy-config.json || true
 
 scan-dast:
-	docker run --rm --network host -v "$$(pwd)/reports:/zap/wrk/:rw" -v "$$(pwd)/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t "$(TARGET_DAST_URL)" -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I
+	docker run --rm --network host -v "$$(pwd)/reports:/zap/wrk/:rw" -v "$$(pwd)/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t "$(TARGET_DAST_URL)" -J zap.json -r zap.html -x zap.xml -c /zap/rules/zap-rules.tsv -I
 
 scan-positive-controls:
 	python scripts/run_positive_controls.py

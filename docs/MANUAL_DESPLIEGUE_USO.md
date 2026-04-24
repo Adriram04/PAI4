@@ -5,30 +5,79 @@
 - Python 3.12+
 - Node.js 20+
 - Docker
-- Acceso a internet para clonado de `my-pass` y feeds de seguridad
+- Acceso al repositorio objetivo `my-pass` si se desea reproducir el analisis fuera de la snapshot incluida
 
-## 2. Restriccion operativa sobre `my-pass`
+## 2. Objetivo del manual
 
-- No se modifica el repositorio `my-pass` original.
-- Se trabaja sobre una copia en `target/my-pass`.
-- Para entorno local, se recomienda usar `TARGET_REPOSITORY_URL=../my-pass`.
-## 3. Instalacion
+Este manual describe como preparar el entorno, ejecutar el pipeline localmente, interpretar los modos de trabajo disponibles y empaquetar la entrega.
 
-Instalar dependencias del repositorio PAI4:
+## 3. Consideraciones operativas
+
+- `my-pass` no se modifica directamente.
+- El repositorio trabaja sobre una copia en `TARGET_CODE_PATH`.
+- El valor por defecto es `target/my-pass`.
+- La clonacion desde `TARGET_REPOSITORY_URL` solo ocurre si la ruta destino no contiene `package.json`.
+- La snapshot actualmente guardada en `target/my-pass` es parcial y no incluye `app/` ni `assets/`.
+
+## 4. Modos de trabajo recomendados
+
+### Modo A - Reproducir exactamente las evidencias incluidas
+
+Usa la snapshot ya presente en `target/my-pass`.
+
+Ventaja:
+
+- coincide con los reportes guardados actualmente en `reports/`
+
+Limitacion:
+
+- esa snapshot no representa el repo fuente completo
+
+### Modo B - Analizar una copia fresca del objetivo
+
+Usa una ruta nueva para evitar reutilizar la snapshot actual.
+
+Ejemplo recomendado:
+
+```bash
+make install TARGET_CODE_PATH=target/my-pass-fresh TARGET_REPOSITORY_URL=../my-pass
+```
+
+Ventaja:
+
+- evita depender de la snapshot parcial versionada en `target/my-pass`
+
+## 5. Instalacion base
+
+Instalar dependencias de PAI4:
 
 ```bash
 python -m pip install -r requirements-dev.txt
 ```
 
-Preparar el objetivo de analisis:
+Preparar el objetivo:
 
 ```bash
 make install TARGET_CODE_PATH=target/my-pass TARGET_REPOSITORY_URL=../my-pass
 ```
 
-Si `target/my-pass` no existe, `make install` lo clona desde `TARGET_REPOSITORY_URL`.
+Si `TARGET_CODE_PATH` ya contiene `package.json`, la automatizacion reutiliza esa ruta y no clona de nuevo.
 
-## 4. Ejecucion del objetivo para DAST
+## 6. Verificacion funcional minima
+
+Ejecutar pruebas unitarias del objetivo:
+
+```bash
+make test TARGET_CODE_PATH=target/my-pass
+```
+
+Estado verificado en esta copia de trabajo:
+
+- `npm run test:unit -- --runInBand` completa `12` suites y `90` tests correctos
+
+## 7. Ejecucion local para DAST
+
+Levantar la aplicacion web:
 
 ```bash
 make run TARGET_CODE_PATH=target/my-pass
@@ -36,39 +85,47 @@ make run TARGET_CODE_PATH=target/my-pass
 
 Por defecto queda accesible en `http://127.0.0.1:19006`.
 
-## 5. Ejecucion de pruebas unitarias del objetivo
+Nota:
 
-```bash
-make test TARGET_CODE_PATH=target/my-pass
-```
+- En local, `make scan-dast` solo ejecuta ZAP contra `TARGET_DAST_URL`.
+- A diferencia del workflow, el `Makefile` no exporta y sirve automaticamente `dist/`.
 
-## 6. Ejecucion de analisis de seguridad
+## 8. Ejecucion de analisis de seguridad
 
-SCA (npm audit):
+SCA:
 
 ```bash
 make scan-sca TARGET_CODE_PATH=target/my-pass
 ```
 
-SAST (Semgrep):
+SAST:
 
 ```bash
 make scan-sast TARGET_CODE_PATH=target/my-pass
 ```
 
-Security in IaC (Trivy):
+IaC:
 
 ```bash
 make scan-iac TARGET_CODE_PATH=target/my-pass
 ```
 
-DAST (ZAP baseline):
+DAST:
 
 ```bash
 make scan-dast TARGET_DAST_URL=http://127.0.0.1:19006
 ```
 
-## 7. Controles positivos automatizados
+Resultados observados en la snapshot actual:
+
+- `Semgrep`: `0` hallazgos en `reports/semgrep.json`
+- `npm audit`: `18` vulnerabilidades en `reports/npm-audit.json`
+- `Trivy config`: `0` hallazgos en `reports/trivy-config.json`
+- `ZAP baseline`: `WARN-NEW: 9` en `reports/zap-baseline.log`
+
+## 9. Controles positivos automatizados
+
+Ejecutar:
 
 ```bash
 make scan-positive-controls
@@ -80,31 +137,38 @@ Genera como minimo:
 - `reports/npm-audit-positive-control.json`
 - `reports/trivy-positive-control.json`
 - `reports/zap-positive-control.json`
+- `reports/zap-positive-control.html`
 - `reports/zap-positive-control.log`
 
-## 8. Pipeline en GitHub Actions
+Estado verificado:
 
-Workflow: `.github/workflows/devsecops.yml`.
+- `Semgrep` detecta `1` hallazgo
+- `Trivy` detecta `36` hallazgos en el control positivo
+- `ZAP` detecta `9` alertas en el control positivo
+
+## 10. Pipeline en GitHub Actions
+
+Workflow: `.github/workflows/devsecops.yml`
 
 Jobs:
 
-- `sast`: Semgrep + control positivo de Semgrep.
-- `sca_iac`: npm audit + Trivy config.
-- `dast`: build web de `my-pass` + ZAP baseline.
-- `positive_controls`: validacion positiva de Semgrep, npm audit, Trivy y ZAP.
-- `deploy_staging`: despliegue web en `nginx` + smoke test.
-- `defectdojo` (opcional): importacion y resumen.
-- `reports_bundle`: consolidacion final de artefactos.
+- `sast`: Semgrep sobre `TARGET_CODE_PATH` y control positivo de Semgrep
+- `sca_iac`: `npm audit` y `Trivy config`
+- `dast`: `expo export --platform web`, servidor temporal y ZAP baseline
+- `positive_controls`: validacion positiva de las cuatro herramientas
+- `deploy_staging`: publicacion del export web en `nginx`
+- `defectdojo`: importacion y resumen opcionales
+- `reports_bundle`: consolidacion de artefactos
 
-## 9. Integracion con DefectDojo
+## 11. DefectDojo
 
-Configurar secretos del repositorio:
+Secretos requeridos:
 
 - `DEFECTDOJO_URL`
 - `DEFECTDOJO_API_KEY`
 - `DEFECTDOJO_ENGAGEMENT_ID`
 
-Con secretos presentes, se generan:
+Salidas estandar del workflow:
 
 - `reports/defectdojo-import-npm-audit.json`
 - `reports/defectdojo-import-semgrep.json`
@@ -112,20 +176,37 @@ Con secretos presentes, se generan:
 - `reports/defectdojo-import-zap.json`
 - `reports/defectdojo-summary.json`
 
-## 10. Estado de evidencias (actual)
+Interpretacion correcta:
 
-Evidencias verificadas en `reports/` el `2026-04-22`:
+- los cuatro imports pueden completarse correctamente aunque un reporte tenga `0` hallazgos
+- `defectdojo-summary.json` es acumulado por engagement y no equivale al ultimo run aislado
 
-- `semgrep.json`, `npm-audit.json`, `trivy-config.json`, `zap.json`, `zap.html`, `zap-baseline.log`
-- `semgrep-positive-control.json`, `semgrep-positive-control-alltools.json`
-- `npm-audit-positive-control.json`, `trivy-positive-control.json`
-- `zap-positive-control.json`, `zap-positive-control.html`, `zap-positive-control.log`
-- `deploy-health.html`, `deploy-staging.log`
+## 12. Estado actual de evidencias
 
-Nota: en `my-pass` no hay manifiestos IaC clasicos (Dockerfile/Kubernetes/Terraform), por lo que `trivy-config.json` puede reflejar ejecucion sin hallazgos de misconfig en IaC.
+Evidencias presentes en `reports/` con timestamps entre `2026-04-22` y `2026-04-23`:
 
-## 11. Empaquetado final
+- principales: `semgrep.json`, `npm-audit.json`, `trivy-config.json`, `zap.json`, `zap.xml`, `zap.html`, `zap-baseline.log`
+- positivos: `semgrep-positive-control.json`, `semgrep-positive-control-alltools.json`, `npm-audit-positive-control.json`, `trivy-positive-control.json`, `zap-positive-control.json`, `zap-positive-control.html`, `zap-positive-control.log`
+- despliegue: `deploy-health.html`, `deploy-staging.log`
+- DefectDojo: `defectdojo-import-*.json`, `defectdojo-summary.json`
+
+## 13. Empaquetado final
+
+Generar ZIP:
 
 ```powershell
 ./scripts/package_pai4.ps1 -TeamNumber <Num>
 ```
+
+Importante:
+
+- el ZIP automatico no incluye `target/my-pass`
+- para reproducir el analisis desde el ZIP, hace falta acceso adicional al repositorio objetivo por URL o por copia local
+
+## 14. Recomendaciones operativas
+
+- Para una entrega centrada en evidencia, usa la snapshot actual y conserva `reports/` tal como estan.
+- Para una entrega centrada en reproducibilidad, trabaja sobre un `TARGET_CODE_PATH` nuevo y vuelve a generar las evidencias.
+- Si vas a explicar resultados a un evaluador, separa siempre:
+  - hallazgos reales del objetivo actual
+  - demostracion de capacidad de deteccion mediante controles positivos

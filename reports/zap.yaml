@@ -37,6 +37,13 @@ jobs:
 - parameters:
     reportDescription: ''
     reportDir: /zap/wrk/
+    reportFile: zap.xml
+    reportTitle: ZAP Scanning Report
+    template: traditional-xml
+  type: report
+- parameters:
+    reportDescription: ''
+    reportDir: /zap/wrk/
     reportFile: zap.json
     reportTitle: ZAP Scanning Report
     template: traditional-json

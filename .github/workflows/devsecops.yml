@@ -178,7 +178,7 @@ jobs:
 
       - name: DAST - OWASP ZAP baseline
         run: |
-          docker run --rm --network=host -v "${PWD}/reports:/zap/wrk/:rw" -v "${PWD}/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t "$TARGET_DAST_URL" -J zap.json -r zap.html -c /zap/rules/zap-rules.tsv -I 2>&1 | tee reports/zap-baseline.log
+          docker run --rm --network=host -v "${PWD}/reports:/zap/wrk/:rw" -v "${PWD}/zap-rules.tsv:/zap/rules/zap-rules.tsv:ro" ghcr.io/zaproxy/zaproxy:stable zap-baseline.py -t "$TARGET_DAST_URL" -J zap.json -r zap.html -x zap.xml -c /zap/rules/zap-rules.tsv -I 2>&1 | tee reports/zap-baseline.log
 
       - name: Stop my-pass web target
         if: ${{ always() }}
@@ -194,6 +194,7 @@ jobs:
           if-no-files-found: warn
           path: |
             reports/zap.json
+            reports/zap.xml
             reports/zap.html
             reports/zap-baseline.log
             reports/target-web.log
@@ -355,10 +356,10 @@ jobs:
       - name: Import findings in DefectDojo
         if: ${{ env.DEFECTDOJO_URL != '' && env.DEFECTDOJO_API_KEY != '' && env.DEFECTDOJO_ENGAGEMENT_ID != '' }}
         run: |
-          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "NPM Audit Scan" --report reports/npm-audit.json --response-out reports/defectdojo-import-npm-audit.json || true
+          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "NPM Audit v7+ Scan" --report reports/npm-audit.json --response-out reports/defectdojo-import-npm-audit.json || true
           python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Semgrep JSON Report" --report reports/semgrep.json --response-out reports/defectdojo-import-semgrep.json || true
           python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "Trivy Scan" --report reports/trivy-config.json --response-out reports/defectdojo-import-trivy.json || true
-          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "ZAP Scan" --report reports/zap.json --response-out reports/defectdojo-import-zap.json || true
+          python scripts/import_to_defectdojo.py --url "$DEFECTDOJO_URL" --api-key "$DEFECTDOJO_API_KEY" --engagement-id "$DEFECTDOJO_ENGAGEMENT_ID" --scan-type "ZAP Scan" --report reports/zap.xml --response-out reports/defectdojo-import-zap.json || true
 
       - name: Export DefectDojo summary
         if: ${{ env.DEFECTDOJO_URL != '' && env.DEFECTDOJO_API_KEY != '' && env.DEFECTDOJO_ENGAGEMENT_ID != '' }}
